@@ -1,5 +1,6 @@
 #include "register_types.h"
 
+#include "drawing_algorithms.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
@@ -12,7 +13,7 @@ void initialize_benchmark_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 
-	//ClassDB::register_class<CPPBenchmark>();
+	ClassDB::register_class<DrawingAlgorithms>();
 }
 
 void uninitialize_benchmark_module(ModuleInitializationLevel p_level) {

@@ -18,14 +18,14 @@ sources = Glob("src/*.cpp")
 
 if env["platform"] == "macos":
     library = env.SharedLibrary(
-        "bin/godot_atelier.{}.{}.framework/godot_atelier.{}.{}".format(
+        "bin/libgodot_atelier.{}.{}.framework/libgodot_atelier.{}.{}".format(
             env["platform"], env["target"], env["platform"], env["target"]
         ),
         source=sources,
     )
 else:
     library = env.SharedLibrary(
-        "bin/godot_atelier{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+        "bin/libgodot_atelier{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
         source=sources,
     )
 
