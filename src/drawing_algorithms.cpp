@@ -1,4 +1,3 @@
-
 #include "drawing_algorithms.h"
 #include <godot_cpp/core/class_db.hpp>
 
@@ -6,7 +5,6 @@ using namespace godot;
 
 
 void DrawingAlgorithms::_bind_methods() {
-    //ClassDB::bind_method(D_METHOD("get_ellipse_points", "pos", "size"), &DrawingAlgorithms::get_ellipse_points);
     ClassDB::bind_static_method("DrawingAlgorithms", D_METHOD("get_ellipse_points", "pos", "size"), &DrawingAlgorithms::get_ellipse_points);
     ClassDB::bind_static_method("DrawingAlgorithms", D_METHOD("get_ellipse_points_filled", "pos", "size", "thickness"), &DrawingAlgorithms::get_ellipse_points_filled, DEFVAL(1));
 }
