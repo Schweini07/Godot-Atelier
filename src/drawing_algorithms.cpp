@@ -16,6 +16,7 @@ void DrawingAlgosCpp::_bind_methods() {
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("scale_3x", "sprite", "tol"), &DrawingAlgosCpp::Scale3x, DEFVAL(0.196078));
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("transform_rectangle", "rect", "matrix", "pivot"), &DrawingAlgosCpp::TransformRectangle);
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("rotxel", "sprite", "angle", "pivot"), &DrawingAlgosCpp::Rotxel);
+    ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("fake_rotsprite", "sprite", "angle", "pivot"), &DrawingAlgosCpp::FakeRotsprite);
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("nn_rotate", "sprite", "angle", "pivot"), &DrawingAlgosCpp::NNRotate);
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("similar_colors", "c1", "c2", "tol"), &DrawingAlgosCpp::SimilarColors, DEFVAL(0.392157));
 }
@@ -271,7 +272,7 @@ void DrawingAlgosCpp::Rotxel(Ref<Image> sprite, float angle, Vector2 pivot)
 	if (UtilityFunctions::is_zero_approx(angle) || UtilityFunctions::is_equal_approx(angle, Math_TAU))
 		return;
 	
-	if (UtilityFunctions::is_equal_approx(angle, Math_PI / 2.f) || UtilityFunctions::is_equal_approx(angle, 3.f * Math_PI / 2.f))
+	if (UtilityFunctions::is_equal_approx(angle, Math_PI / 2.0) || UtilityFunctions::is_equal_approx(angle, 3.0 * Math_PI / 2.0))
 	{
 		NNRotate(sprite, angle, pivot);
 		return;
@@ -392,6 +393,31 @@ void DrawingAlgosCpp::Rotxel(Ref<Image> sprite, float angle, Vector2 pivot)
 	}
 }
 
+void DrawingAlgosCpp::FakeRotsprite(Ref<Image> sprite, float angle, Vector2 pivot)
+{
+	if (UtilityFunctions::is_zero_approx(angle) || UtilityFunctions::is_equal_approx(angle, Math_TAU))
+		return;
+	
+	if (UtilityFunctions::is_equal_approx(angle, Math_PI/ 2.0) || UtilityFunctions::is_equal_approx(angle, 2.0 * Math_PI / 2.0))
+	{
+		NNRotate(sprite, angle, pivot);
+		return;
+	}
+
+	if (UtilityFunctions::is_equal_approx(angle, Math_PI))
+	{
+		sprite->rotate_180();
+		return;
+	}
+
+	Ref<Image> selected_sprite = Scale3x(sprite);
+	NNRotate(selected_sprite, angle, pivot * 3);
+	selected_sprite->resize(
+		selected_sprite->get_width() / 3, selected_sprite->get_height() / 3, selected_sprite->INTERPOLATE_NEAREST
+	);
+	sprite->blit_rect(selected_sprite, Rect2(Vector2(0, 0), selected_sprite->get_size()), Vector2(0, 0));
+}
+
 void DrawingAlgosCpp::NNRotate(Ref<Image> sprite, float angle, Vector2 pivot)
 {
 	if (UtilityFunctions::is_zero_approx(angle) || UtilityFunctions::is_equal_approx(angle, Math_TAU))
@@ -413,7 +439,7 @@ void DrawingAlgosCpp::NNRotate(Ref<Image> sprite, float angle, Vector2 pivot)
 		for (int y = 0; y < sprite->get_width(); y++)
 		{
 			int ox = (x - pivot.x) * angle_cos + (y - pivot.y) * angle_sin + pivot.x;
-			int oy = (x - pivot.x) * angle_sin + (y - pivot.y) * angle_cos + pivot.y;
+			int oy = -(x - pivot.x) * angle_sin + (y - pivot.y) * angle_cos + pivot.y;
 
 			if (ox >= 0 && ox < sprite->get_width() && oy >= 0 && oy < sprite->get_height())
 				sprite->set_pixel(x, y, aux->get_pixel(ox, oy));

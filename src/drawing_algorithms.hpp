@@ -23,6 +23,7 @@ public:
     static Ref<Image> Scale3x(Ref<Image> sprite, float tol = 0.196078);
     static Rect2 TransformRectangle(Rect2 rect, Transform2D matrix, Vector2 pivot);
     static void Rotxel(Ref<Image> sprite, float angle, Vector2 pivot);
+    static void FakeRotsprite(Ref<Image> sprite, float angle, Vector2 pivot);
     static void NNRotate(Ref<Image> sprite, float angle, Vector2 pivot);
     static bool SimilarColors(Color c1, Color c2, float tol = 0.392157);
 };
