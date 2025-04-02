@@ -1,12 +1,10 @@
-#include "register_types.h"
+#include "register_types.hpp"
 
-#include "drawing_algorithms.h"
+#include "drawing_algorithms.hpp"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
-
-using namespace godot;
 
 void initialize_atelier_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
