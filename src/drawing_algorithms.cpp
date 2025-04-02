@@ -1,4 +1,4 @@
-#include "drawing_algorithms.h"
+#include "drawing_algorithms.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/image.hpp>
@@ -15,6 +15,7 @@ void DrawingAlgosCpp::_bind_methods() {
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("get_ellipse_points_filled", "pos", "size", "thickness"), &DrawingAlgosCpp::GetEllipsePointsFilled, DEFVAL(1));
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("scale_3x", "sprite", "tol"), &DrawingAlgosCpp::Scale3x, DEFVAL(0.196078));
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("transform_rectangle", "rect", "matrix", "pivot"), &DrawingAlgosCpp::TransformRectangle);
+    ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("rotxel", "sprite", "angle", "pivot"), &DrawingAlgosCpp::Rotxel);
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("nn_rotate", "sprite", "angle", "pivot"), &DrawingAlgosCpp::NNRotate);
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("similar_colors", "c1", "c2", "tol"), &DrawingAlgosCpp::SimilarColors, DEFVAL(0.392157));
 }
@@ -251,13 +252,144 @@ Ref<Image> DrawingAlgosCpp::Scale3x(Ref<Image> sprite, float tol)
 	return scaled;
 }
 
-bool DrawingAlgosCpp::SimilarColors(Color c1, Color c2, float tol)
+Rect2 DrawingAlgosCpp::TransformRectangle(Rect2 rect, Transform2D matrix, Vector2 pivot)
 {
-	return 
-		UtilityFunctions::absf(c1.r - c2.r) <= tol
-		&& UtilityFunctions::absf(c1.g - c2.g) <= tol
-		&& UtilityFunctions::absf(c1.b - c2.b) <= tol
-		&& UtilityFunctions::absf(c1.a - c2.a) <= tol;
+	pivot = rect.size / 2;
+
+	Rect2 offset_rect = rect;
+	Vector2 offset_pos = -pivot;
+
+	offset_rect.position = offset_pos;
+	offset_rect = matrix.xform(offset_rect);
+	offset_rect.position = rect.position + offset_rect.position - offset_pos;
+
+    return offset_rect;
+}
+
+void DrawingAlgosCpp::Rotxel(Ref<Image> sprite, float angle, Vector2 pivot)
+{
+	if (UtilityFunctions::is_zero_approx(angle) || UtilityFunctions::is_equal_approx(angle, Math_TAU))
+		return;
+	
+	if (UtilityFunctions::is_equal_approx(angle, Math_PI / 2.f) || UtilityFunctions::is_equal_approx(angle, 3.f * Math_PI / 2.f))
+	{
+		NNRotate(sprite, angle, pivot);
+		return;
+	}
+
+	if (UtilityFunctions::is_equal_approx(angle, Math_PI))
+	{
+		sprite->rotate_180();
+		return;
+	}
+
+	Ref<Image> aux = memnew(Image);
+	aux->copy_from(sprite);
+
+	int ox = 0;
+	int oy = 0;
+	for (int x = 0; x < sprite->get_size().x; x++)
+	{
+		for (int y = 0; y < sprite->get_size().y; y++)
+		{
+			int dx = 3 * (x - pivot.x);
+			int dy = 3 * (y - pivot.y);
+			bool found_pixel = false;
+
+			for (int k = 0; k < 9; k++)
+			{
+				int modk = -1 + k % 3;
+				int divk = -1 + static_cast<int>(k / 3);
+				double dir = Math::atan2(static_cast<double>(dy + divk), static_cast<double>(dx + modk));
+				double mag = Math::sqrt(
+					Math::pow(dx + modk, 2.0)
+					+ Math::pow(dy + divk, 2.0)
+				);
+
+				dir -= angle;
+				ox = UtilityFunctions::roundi(pivot.x * 3 + 1 + mag * cos(dir));
+				oy = UtilityFunctions::roundi(pivot.y * 3 + 1 + mag * sin(dir));
+
+				if (sprite->get_width() % 2 != 0)
+				{
+					ox += 1;
+					oy += 1;
+				}
+
+				if (ox >= 0 && ox < sprite->get_width() *3 && oy >= 0 && oy < sprite->get_height() * 3)
+				{
+					found_pixel = true;
+					break;
+				}
+			}
+
+			if (!found_pixel)
+			{
+				sprite->set_pixel(x, y, Color(0, 0, 0, 0));
+				continue;
+			}
+
+			int fil = oy % 3;
+			int col = ox % 3;
+			int index = col + 3 * fil;
+
+			ox = UtilityFunctions::roundi((ox - 1) / 3.0);
+			oy = UtilityFunctions::roundi((oy - 1) / 3.0);
+			
+			Color p;
+			if (ox == 0 || ox == sprite->get_width() - 1 || oy == 0 || oy == sprite->get_height() - 1)
+				p = aux->get_pixel(ox, oy);
+			else
+			{
+				Color a = aux->get_pixel(ox - 1, oy - 1);
+				Color b = aux->get_pixel(ox, oy - 1);
+				Color c = aux->get_pixel(ox + 1, oy - 1);
+				Color d = aux->get_pixel(ox - 1, oy);
+				Color e = aux->get_pixel(ox, oy);
+				Color f = aux->get_pixel(ox + 1, oy);
+				Color g = aux->get_pixel(ox - 1, oy + 1);
+				Color h = aux->get_pixel(ox, oy + 1);
+				Color i = aux->get_pixel(ox + 1, oy + 1);
+
+				switch (index)
+				{
+					case 0:
+						p = (SimilarColors(d, b) && !SimilarColors(d, h) && !SimilarColors(b, f)) ? d : e;
+						break;
+					case 1:
+						p = ((SimilarColors(d, b) && !SimilarColors(d, h) && !SimilarColors(b, f) && !SimilarColors(e, c)) ||
+							(SimilarColors(b, f) && !SimilarColors(d, b) && !SimilarColors(f, h) && !SimilarColors(e, a))) ? b : e;
+						break;
+					case 2:
+						p = (SimilarColors(b, f) && !SimilarColors(d, b) && !SimilarColors(f, h)) ? f : e;
+						break;
+					case 3:
+						p = ((SimilarColors(d, h) && !SimilarColors(f, h) && !SimilarColors(d, b) && !SimilarColors(e, a)) ||
+							(SimilarColors(d, b) && !SimilarColors(d, h) && !SimilarColors(b, f) && !SimilarColors(e, g))) ? d : e;
+						break;
+					case 4:
+						p = e;
+						break;
+					case 5:
+						p = ((SimilarColors(b, f) && !SimilarColors(d, b) && !SimilarColors(f, h) && !SimilarColors(e, i)) ||
+							(SimilarColors(f, h) && !SimilarColors(b, f) && !SimilarColors(d, h) && !SimilarColors(e, c))) ? f : e;
+						break;
+					case 6:
+						p = (SimilarColors(d, h) && !SimilarColors(f, h) && !SimilarColors(d, b)) ? d : e;
+						break;
+					case 7:
+						p = ((SimilarColors(f, h) && !SimilarColors(f, b) && !SimilarColors(d, h) && !SimilarColors(e, g)) ||
+							(SimilarColors(d, h) && !SimilarColors(f, h) && !SimilarColors(d, b) && !SimilarColors(e, i))) ? h : e;
+						break;
+					case 8:
+						p = (SimilarColors(f, h) && !SimilarColors(f, b) && !SimilarColors(d, h)) ? f : e;
+						break;
+				}
+			}
+
+			sprite->set_pixel(x, y, p);
+		}
+	}
 }
 
 void DrawingAlgosCpp::NNRotate(Ref<Image> sprite, float angle, Vector2 pivot)
@@ -291,17 +423,12 @@ void DrawingAlgosCpp::NNRotate(Ref<Image> sprite, float angle, Vector2 pivot)
 	}
 }
 
-Rect2 DrawingAlgosCpp::TransformRectangle(Rect2 rect, Transform2D matrix, Vector2 pivot)
+bool DrawingAlgosCpp::SimilarColors(Color c1, Color c2, float tol)
 {
-	pivot = rect.size / 2;
-
-	Rect2 offset_rect = rect;
-	Vector2 offset_pos = -pivot;
-
-	offset_rect.position = offset_pos;
-	offset_rect = matrix.xform(offset_rect);
-	offset_rect.position = rect.position + offset_rect.position - offset_pos;
-
-    return offset_rect;
+	return 
+		UtilityFunctions::absf(c1.r - c2.r) <= tol
+		&& UtilityFunctions::absf(c1.g - c2.g) <= tol
+		&& UtilityFunctions::absf(c1.b - c2.b) <= tol
+		&& UtilityFunctions::absf(c1.a - c2.a) <= tol;
 }
 
