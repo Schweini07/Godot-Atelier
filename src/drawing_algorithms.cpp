@@ -1,12 +1,19 @@
 #include "drawing_algorithms.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/main_loop.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/core/print_string.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/shader.hpp>
+#include <godot_cpp/classes/line2d.hpp>
+#include <godot_cpp/classes/undo_redo.hpp>
 
 using namespace godot;
-
 
 void DrawingAlgosCpp::_bind_methods() {
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("set_layer_metadata_image", "layer", "cel", "image", "index", "include"), &DrawingAlgosCpp::SetLayerMetadataImage, DEFVAL(true));
@@ -19,6 +26,21 @@ void DrawingAlgosCpp::_bind_methods() {
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("fake_rotsprite", "sprite", "angle", "pivot"), &DrawingAlgosCpp::FakeRotsprite);
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("nn_rotate", "sprite", "angle", "pivot"), &DrawingAlgosCpp::NNRotate);
     ClassDB::bind_static_method("DrawingAlgosCpp", D_METHOD("similar_colors", "c1", "c2", "tol"), &DrawingAlgosCpp::SimilarColors, DEFVAL(0.392157));
+}
+
+DrawingAlgosCpp::DrawingAlgosCpp()
+{
+	ResourceLoader *resource_loader = ResourceLoader::get_singleton();
+
+	rotxel_shader = static_cast<Ref<Shader>>(resource_loader->load("res://src/Shaders/Effects/Rotation/SmearRotxel.gdshader"));
+	clean_edge_shader = static_cast<Ref<Shader>>(resource_loader->load("res://src/Shaders/Effects/Rotation/cleanEdge.gdshader"));
+	omniscale_shader = static_cast<Ref<Shader>>(resource_loader->load("res://src/Shaders/Effects/Rotation/OmniScale.gdshader"));
+	rotxel_shader = static_cast<Ref<Shader>>(resource_loader->load("res://src/Shaders/Effects/Rotation/SmearRotxel.gdshader"));
+	nn_shader = static_cast<Ref<Shader>>(resource_loader->load("res://src/Shaders/Effects/Rotation/NearestNeighbour.gdshader"));
+}
+
+DrawingAlgosCpp::~DrawingAlgosCpp()
+{
 }
 
 void DrawingAlgosCpp::SetLayerMetadataImage(Ref<RefCounted> layer, Ref<RefCounted> cel, Ref<Image> image, int index, bool include)
@@ -253,6 +275,76 @@ Ref<Image> DrawingAlgosCpp::Scale3x(Ref<Image> sprite, float tol)
 	return scaled;
 }
 
+void DrawingAlgosCpp::Transform(Ref<Image> image, Dictionary params, RotationAlgorithm algorithm, bool expand)
+{
+	Transform2D transformation_matrix = params.get("transformation_matrix", Transform2D());
+	Vector2 pivot = params.get("pivot", image->get_size() / 2);
+
+	if (expand)
+	{
+		Rect2i image_rect = Rect2i(Vector2(0, 0), image->get_size());
+		Rect2i new_image_rect = transformation_matrix.xform(image_rect);
+		Vector2i new_image_size = new_image_rect.size;
+		if (image->get_size() != new_image_size)
+		{
+			pivot = new_image_size / 2 - (Vector2i(pivot) - image->get_size() / 2);
+			Ref<Image> tmp_image = memnew(Image);
+			tmp_image->create_empty(
+				new_image_size.x, new_image_size.y, image->has_mipmaps(), image->get_format()
+			);
+			tmp_image->blit_rect(image, image_rect, (new_image_size - image->get_size()) / 2);
+			image->copy_from(tmp_image);
+		}
+	}
+
+	if (TypeIsShader(algorithm))
+	{
+		params["pivot"] = pivot / Vector2(image->get_size());
+		Ref<Resource> shader = rotxel_shader;
+		switch (algorithm)
+		{
+			case RotationAlgorithm::CLEANEDGE:
+				shader = clean_edge_shader;
+				break;
+			
+			case RotationAlgorithm::OMNISCALE:
+				shader = omniscale_shader;
+				break;
+			
+			case RotationAlgorithm::NNS:
+				shader = nn_shader;
+				break;
+		}
+
+		Ref<RefCounted> gen = memnew(RefCounted);
+		gen->set_script("res://src/Classes/ShaderImageEffect.gd");
+		gen->call("generate_image", image, shader, params, image->get_size());
+	}
+	else
+	{
+		real_t angle = transformation_matrix.get_rotation();
+		switch (algorithm)
+		{
+			case RotationAlgorithm::ROTXEL:
+				Rotxel(image, angle, pivot);
+				break;
+			
+			case RotationAlgorithm::NN:
+				NNRotate(image, angle, pivot);
+				break;
+			
+			case RotationAlgorithm::URD:
+				FakeRotsprite(image, angle, pivot);
+				break;
+		}
+	}
+}
+
+bool DrawingAlgosCpp::TypeIsShader(RotationAlgorithm algorithm)
+{
+	return algorithm <= RotationAlgorithm::NNS;
+}
+
 Rect2 DrawingAlgosCpp::TransformRectangle(Rect2 rect, Transform2D matrix, Vector2 pivot)
 {
 	pivot = rect.size / 2;
@@ -458,3 +550,134 @@ bool DrawingAlgosCpp::SimilarColors(Color c1, Color c2, float tol)
 		&& UtilityFunctions::absf(c1.a - c2.a) <= tol;
 }
 
+void DrawingAlgosCpp::ScaleProject(int width, int height, int interpolation)
+{
+	Dictionary redo_data, undo_data;
+
+	SceneTree *scene_tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+	Node *global = scene_tree->get_root()->get_node_or_null("Global");
+	Ref<RefCounted> project = Object::cast_to<RefCounted>(global->get("current_project"));
+	TypedArray<RefCounted> pixel_cels = project->call("get_all_pixel_cels");
+
+	for (int i = 0; i < pixel_cels.size(); i++)
+	{
+		Ref<RefCounted> cel = pixel_cels[i];
+		cel->set_script("res://src/Classes/Cels/PixelCel.gd"); // TODO: This assigns PixeCel to everything, but what if the cel is no that?
+		
+		Ref<Image> cel_image = cel->call("get_image");
+		cel_image->set_script("res://src/Classes/ImageExtended.gd");
+		
+		Ref<Image> sprite = ResizeImage(cel_image, width, height, interpolation);
+		sprite->set_script("res://src/Classes/ImageExtended.gd");
+
+		if (cel->get_script() == "res://src/Classes/Cels/CelTileMap.gd")
+			cel->call("serialize_undo_data_source_image", sprite, redo_data, undo_data);
+		
+ 		sprite->call("add_data_to_dictionary", redo_data, cel_image);
+ 		cel_image->call("add_data_to_dictionary", undo_data);
+	}
+
+	GeneralDoAndUndoScale(width, height, redo_data, undo_data);
+}
+
+Ref<Image> DrawingAlgosCpp::ResizeImage(Ref<Image> image, int width, int height, int interpolation)
+{
+	Ref<Image> new_image = memnew(Image);
+	if (image->get_script() == "res://src/Classes/ImageExtended.gd")
+	{
+		new_image->set_script("res://src/Classes/ImageExtended.gd");
+		new_image->set("is_indexed", image->get("is_indexed"));
+		new_image->copy_from(image);
+		new_image->call("select_palette", "", false);
+	}
+	else
+		new_image->copy_from(image);
+
+	if (interpolation == Interpolation::SCALE3X_INTERPOLATION)
+	{
+		Vector2i times = Vector2i(
+			UtilityFunctions::ceili(width / (3.0 * new_image->get_width())),
+			UtilityFunctions::ceili(height / (3.0 * new_image->get_height()))
+		);
+		
+		for (int i = 0; i < UtilityFunctions::maxi(times.x, times.y); i++)
+			new_image->copy_from(Scale3x(new_image));
+		new_image->resize(width, height, Image::Interpolation::INTERPOLATE_NEAREST);
+	}
+	else if (interpolation == Interpolation::CLEANEDGE_INTERPOLATION)
+	{
+		Ref<RefCounted> gen = memnew(RefCounted);
+		gen->set_script("res://src/Classes/ShaderImageEffect.gd");
+
+		gen->call("generate_image", new_image, clean_edge_shader, Dictionary(),  Vector2i(width, height), false);
+	}
+	else if (interpolation == Interpolation::OMNISCALE_INTERPOLATION) // && omniscale_shader) // TODO: What does this check for and how can we do it in C++?
+	{
+		Ref<RefCounted> gen = memnew(RefCounted);
+		gen->set_script("res://src/Classes/ShaderImageEffect.gd");
+
+		gen->call("generate_image", new_image, omniscale_shader, Dictionary(),  Vector2i(width, height), false);
+	}
+	else
+		new_image->resize(width, height, static_cast<Image::Interpolation>(interpolation));
+	
+	if (new_image->get_script() == "res://src/Classes/ImageExtended.gd")
+		new_image->call("on_size_changed");
+	
+	return new_image;
+}
+
+void DrawingAlgosCpp::GeneralDoAndUndoScale(int width, int height, Dictionary redo_data, Dictionary undo_data)
+{
+	SceneTree *scene_tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+	Node *global = scene_tree->get_root()->get_node_or_null("Global");
+	Ref<RefCounted> project = Object::cast_to<RefCounted>(global->get("current_project"));
+	Vector2i size(width, height);
+
+	Vector2i project_size = project->get("size");
+	float x_ratio = project_size.x / width;
+	float y_ratio = project_size.y / height;
+	
+	Ref<RefCounted> selection_map_copy = memnew(RefCounted);
+	selection_map_copy->set_script("res://src/classes/SelectionMap.gd");
+	selection_map_copy->call("copy_from", project->get("selection_map"));
+	selection_map_copy->call("crop", size.x, size.y);
+	redo_data[project->get("selection_map")] = selection_map_copy->get("data");
+	undo_data[project->get("selection_map")] = Object::cast_to<RefCounted>(project->get("selection_map"))->get("data");
+
+	float new_x_symmetry_point = static_cast<float>(project->get("x_symmetry_point")) / x_ratio;
+	float new_y_symmetry_point = static_cast<float>(project->get("y_symmetry_point")) / y_ratio;
+	PackedVector2Array new_x_symmetry_axis_points = Object::cast_to<Line2D>(project->get("x_symmetry_axis"))->get_points();
+	PackedVector2Array new_y_symmetry_axis_points = Object::cast_to<Line2D>(project->get("y_symmetry_axis"))->get_points();
+	new_x_symmetry_axis_points[0].y /= y_ratio;
+	new_x_symmetry_axis_points[1].y /= y_ratio;
+	new_y_symmetry_axis_points[0].x /= x_ratio;
+	new_y_symmetry_axis_points[1].x /= x_ratio;
+
+	project->set("undos", static_cast<int>(project->get("undos")) + 1);
+
+	UndoRedo *undo_redo = Object::cast_to<UndoRedo>(project->get("undo_redo"));
+	undo_redo->create_action("Scale");
+	undo_redo->add_do_property(*project, "size", size);
+	undo_redo->add_do_property(*project, "x_symmetry_point", new_x_symmetry_point);
+	undo_redo->add_do_property(*project, "y_symmetry_point", new_y_symmetry_point);
+	undo_redo->add_do_property(project->get("x_symmetry_axis"), "points", new_x_symmetry_axis_points);
+	undo_redo->add_do_property(project->get("y_symmetry_axis"), "points", new_y_symmetry_axis_points);
+	project->call("deserialize_cel_undo_data",redo_data, undo_data);
+	undo_redo->add_undo_property(*project, "size", project->get("size"));
+	undo_redo->add_undo_property(*project, "x_symmetry_point", project->get("x_symmetry_point"));
+	undo_redo->add_undo_property(*project, "y_symmetry_point", project->get("y_symmetry_point"));
+	undo_redo->add_undo_property(
+		project->get("x_symmetry_axis"), "points", Object::cast_to<Line2D>(project->get("x_symmetry_axis"))->get_points()
+	);
+	undo_redo->add_undo_property(
+		project->get("y_symmetry_axis"), "points", Object::cast_to<Line2D>(project->get("y_symmetry_axis"))->get_points()
+	);
+
+	Variant undo_or_redo_variant = global->get("undo_or_redo");
+	Callable undo_or_redo_callable = undo_or_redo_variant;
+
+	undo_redo->add_undo_method(undo_or_redo_callable.bind(true));
+	undo_redo->add_do_method(undo_or_redo_callable.bind(false));
+	undo_redo->commit_action();
+}
