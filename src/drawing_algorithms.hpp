@@ -39,6 +39,7 @@ public:
     static void FakeRotsprite(Ref<Image> sprite, float angle, Vector2 pivot);
     static void NNRotate(Ref<Image> sprite, float angle, Vector2 pivot);
     static bool SimilarColors(Color c1, Color c2, float tol = 0.392157);
+    static void Center(Array indices);
     void ScaleProject(int width, int height, int interpolation); // TODO: Function should be static, this problematic though because of the use of non-static variables in ResizeImage
     Ref<Image> ResizeImage(Ref<Image> image, int width, int height, int interpolation);
     static void GeneralDoAndUndoScale(int width, int height, Dictionary redo_data, Dictionary undo_data);

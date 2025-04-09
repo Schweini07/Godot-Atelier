@@ -550,6 +550,78 @@ bool DrawingAlgosCpp::SimilarColors(Color c1, Color c2, float tol)
 		&& UtilityFunctions::absf(c1.a - c2.a) <= tol;
 }
 
+void DrawingAlgosCpp::Center(Array indices)
+{
+	SceneTree *scene_tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+	Node *global = scene_tree->get_root()->get_node_or_null("Global");
+	Ref<RefCounted> project = Object::cast_to<RefCounted>(global->get("current_project"));
+	project->set_script("res://src/Classes/Project.gd");
+
+  	Dictionary redo_data, undo_data;
+  	project->set("undos", static_cast<int>(project->get("undos")) + 1);
+
+  	UndoRedo *undo_redo = Object::cast_to<UndoRedo>(project->get("undo_redo"));
+  	undo_redo->create_action("Center Frames");
+	
+  	for (const int32_t & frame : indices)
+	{
+		Rect2i used_rect = Rect2i();
+		
+		Array project_frames = project->get("frames");
+		Array cels = project_frames[frame].get("cels");
+
+		for (int i = 0; i < cels.size(); i++)
+		{
+			Ref<RefCounted> cel = Object::cast_to<RefCounted>(cels[i]);
+			if (cel->get_script() != "res://src/Classes/Cels/PixelCel.gd")
+				continue;
+			
+			Rect2i cel_rect = cel->call("get_image").call("get_used_rect");
+			if (cel_rect.has_area())
+				used_rect = (used_rect.has_area()) ? used_rect.merge(cel_rect) : cel_rect;
+		}
+
+		if (!used_rect.has_area())
+			continue;
+		
+		Vector2i project_size = project->get("size");
+		Vector2i offset = static_cast<Vector2>(0.5 * (project_size - used_rect.size)).floor();
+
+		for (int i = 0; i < cels.size(); i++)
+		{
+			Ref<RefCounted> cel = Object::cast_to<RefCounted>(cels[i]);
+			if (cel->get_script() != "res://src/Classes/Cels/PixelCel.gd")
+				continue;
+			
+			Ref<Image> cel_image = cel->call("get_image");
+			cel_image->set_script("res://src/Classes/ImageExtended.gd");
+
+			Ref<Image> tmp_centered = project->call("new_empty_image");
+			tmp_centered->blend_rect(cel->get("image"), used_rect, offset);
+
+			Ref<Image> centered = memnew(Image);
+			centered->set_script("res://src/Classes/ImageExtended.gd");
+			centered->call("copy_from_custom", tmp_centered, cel_image->get("is_indexed"));
+
+			if (cel->get_script() == "res://src/Classes/Cels/CelTileMap.gd")
+				cel->call("serialize_undo_data_source_image", centered, redo_data, undo_data);
+			
+			centered->call("add_data_to_dictionary", redo_data, undo_data);
+			cel_image->call("add_data_to_dictionary", undo_data);
+		}
+	}
+
+	project->call("deserialize_cel_undo_data", redo_data, undo_data);
+
+	Variant undo_or_redo_variant = global->get("undo_or_redo");
+	Callable undo_or_redo_callable = undo_or_redo_variant;
+	
+	undo_redo->call("add_undo_method", undo_or_redo_callable.bind(true));
+	undo_redo->call("add_do_method", undo_or_redo_callable.bind(false));
+
+	undo_redo->call("commit_action");
+}
+
 void DrawingAlgosCpp::ScaleProject(int width, int height, int interpolation)
 {
 	Dictionary redo_data, undo_data;
@@ -557,6 +629,8 @@ void DrawingAlgosCpp::ScaleProject(int width, int height, int interpolation)
 	SceneTree *scene_tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
 	Node *global = scene_tree->get_root()->get_node_or_null("Global");
 	Ref<RefCounted> project = Object::cast_to<RefCounted>(global->get("current_project"));
+	project->set_script("res://src/Classes/Project.gd");
+
 	TypedArray<RefCounted> pixel_cels = project->call("get_all_pixel_cels");
 
 	for (int i = 0; i < pixel_cels.size(); i++)
@@ -632,6 +706,8 @@ void DrawingAlgosCpp::GeneralDoAndUndoScale(int width, int height, Dictionary re
 	SceneTree *scene_tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
 	Node *global = scene_tree->get_root()->get_node_or_null("Global");
 	Ref<RefCounted> project = Object::cast_to<RefCounted>(global->get("current_project"));
+	project->set_script("res://src/Classes/Project.gd");
+
 	Vector2i size(width, height);
 
 	Vector2i project_size = project->get("size");
