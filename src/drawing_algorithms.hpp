@@ -43,6 +43,7 @@ public:
     void ScaleProject(int width, int height, int interpolation); // TODO: Function should be static, this problematic though because of the use of non-static variables in ResizeImage
     Ref<Image> ResizeImage(Ref<Image> image, int width, int height, int interpolation);
     static void CropToSelection();
+    static void CropToContent();
     static void GeneralDoAndUndoScale(int width, int height, Dictionary redo_data, Dictionary undo_data);
 };
 

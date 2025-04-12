@@ -750,6 +750,79 @@ void DrawingAlgosCpp::CropToSelection()
 	GeneralDoAndUndoScale(rect.size.x, rect.size.y, redo_data, undo_data);
 }
 
+void DrawingAlgosCpp::CropToContent()
+{
+	SceneTree *scene_tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+	Node *global = scene_tree->get_root()->get_node_or_null("Global");
+
+	Ref<RefCounted> project = Object::cast_to<RefCounted>(global->get("current_project"));
+	project->set_script("res://src/Classes/Project.gd");
+
+	if (!project->get("has_selection"))
+		return;
+	
+	Node2D *canvas = Object::cast_to<Node2D>(global->get("canvas"));
+	project->set_script("res://src/UI/Canvas/Canvas.gd");
+
+	Node2D *selection = Object::cast_to<Node2D>(canvas->get("canvas"));
+	selection->set_script("res://src/UI/Canvas/SelectionNode");
+
+	selection->call("transform_content_confirm");
+	
+	Rect2i used_rect;
+
+	TypedArray<RefCounted> pixel_cels = project->call("get_all_pixel_cels");
+
+	for (int i = 0; i < pixel_cels.size(); i++)
+	{
+		Ref<RefCounted> cel = pixel_cels[i];
+		cel->set_script("res://src/Classes/Cels/PixelCel.gd"); // TODO: This assigns PixeCel to everything, but what if the cel is no that?
+
+		Ref<Image> cel_image = cel->call("get_image");
+		cel_image->set_script("res://src/Classes/ImageExtended.gd");
+		
+		Rect2i cel_used_rect = cel_image->get_used_rect();
+		if (cel_used_rect == Rect2(0, 0, 0, 0))
+			continue;
+		
+		if (used_rect == Rect2i(0, 0, 0, 0))
+			used_rect = cel_used_rect;
+		else
+			used_rect = used_rect.merge(cel_used_rect);
+	}
+
+	if (used_rect == Rect2i(0, 0, 0, 0))
+		return;
+	
+	int width = used_rect.size.x;
+	int height = used_rect.size.y;
+	Dictionary redo_data, undo_data;
+
+	for (int i = 0; i < pixel_cels.size(); i++)
+	{
+		Ref<RefCounted> cel = pixel_cels[i];
+		cel->set_script("res://src/Classes/Cels/PixelCel.gd"); // TODO: This assigns PixeCel to everything, but what if the cel is no that?
+
+		Ref<Image> cel_image = cel->call("get_image");
+		cel_image->set_script("res://src/Classes/ImageExtended.gd");
+		 
+		Ref<Image> tmp_cropped = cel_image->get_region(used_rect);
+		
+		Ref<Image> cropped = memnew(Image);
+		cropped->set_script("res://src/Classes/ImageExtended.gd");
+
+		cropped->call("copy_from_custom", tmp_cropped, static_cast<bool>(cel_image->get("is_indexed")));
+
+		if (cel->get_script() == "res://src/Classes/Cels/CelTileMap.gd")
+			cel->call("serialize_undo_data_source_image", cropped, redo_data, undo_data);
+		
+		cropped->call("add_data_to_dictionary", redo_data, cel_image);
+ 		cel_image->call("add_data_to_dictionary", undo_data);
+	}
+
+	GeneralDoAndUndoScale(width, height, redo_data, undo_data);
+}
+
 void DrawingAlgosCpp::GeneralDoAndUndoScale(int width, int height, Dictionary redo_data, Dictionary undo_data)
 {
 	SceneTree *scene_tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
