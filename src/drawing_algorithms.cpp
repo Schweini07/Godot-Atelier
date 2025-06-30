@@ -43,6 +43,154 @@ DrawingAlgosCpp::~DrawingAlgosCpp()
 {
 }
 
+void BlendLayers(Ref<Image> image, Ref<RefCounted> frame, Vector2i origin, Ref<RefCounted> project, bool only_selected_cels, bool only_selected_layers)
+{
+	frame->set_script("res://src/Classes/Frame.gd");
+	project->set_script("res://src/Classes/Project.gd");
+
+	int frame_index = project->call("frames").call("find", frame);
+
+	Array previous_ordered_layers = project->get("ordered_layers");
+	project->call("order_layers", frame_index);
+
+	Array textures;
+
+	int layer_count = project->get("layers").call("size");
+	Ref<Image> metadata_image;
+	metadata_image.instantiate();
+	metadata_image->create(layer_count, 4, false, Image::FORMAT_R8);
+
+	Array ordered_layers = project->get("ordered_layers");
+
+	for (int i = 0; i < layer_count; i++)
+	{
+		int ordered_index = ordered_layers[i];
+		Variant layer_variant = project->get("layers")[ordered_index];
+		bool include = layer->call("is_visible_in_hierarchy");
+
+		if (only_selected_cels && include)
+		{
+			Array selected_cels = project->get("selected_cels");
+			Array test_array;
+			test_array.append(frame_index);
+			test_array.append(i);
+			if (!selected_cels.has(test_array))
+				include = false;
+		}
+
+		if (only_selected_layers && include) {
+			Array selected_cels = project->get("selected_cels");
+			bool layer_is_selected = false;
+			for (int j = 0; j < selected_cels.size(); j++) {
+				Array sel_cel = selected_cels[j];
+				if (sel_cel[1].operator int() == i) {
+					layer_is_selected = true;
+					break;
+				}
+			}
+			if (!layer_is_selected) {
+				include = false;
+			}
+		}
+
+		Array frame_cels = frame->get("cels");
+		Ref<RefCounted> cel = frame_cels[ordered_index];
+
+		if (DisplayServer::get_singleton()->get_name() == "headless") {
+			project->call("blend_layers_headless", image, project, layer, cel, origin);
+		} else {
+			if (layer->call("is_blender")) {
+				Ref<Image> cel_image = layer->call("blend_children", frame);
+				textures.append(cel_image);
+			} else {
+				Ref<Image> cel_image = layer->call("display_effects", cel);
+				textures.append(cel_image);
+			}
+
+			if (layer->call("is_blended_by_ancestor") && !only_selected_cels && !only_selected_layers) {
+				include = false;
+			}
+
+			project->call("set_layer_metadata_image", layer, cel, metadata_image, ordered_index, include);
+		}
+	}
+
+	if (DisplayServer::get_singleton()->get_name() != "headless") {
+		Ref<Texture2DArray> texture_array;
+		texture_array.instantiate();
+		texture_array->call("create_from_images", textures);
+
+		Dictionary params;
+		params["layers"] = texture_array;
+		params["metadata"] = ImageTexture::create_from_image(metadata_image);
+
+		Vector2i size = project->get("size");
+		Ref<Image> blended;
+		blended.instantiate();
+		blended->create(size.x, size.y, false, image->get_format());
+
+		Ref<RefCounted> gen;
+		gen.instantiate("ShaderImageEffect"); // assuming ShaderImageEffect is registered
+		gen->call("generate_image", blended, project->get("blend_layers_shader"), params, size);
+
+		image->blend_rect(blended, Rect2i(Vector2i(), size), origin);
+	}
+
+	project->set("ordered_layers", previous_ordered_layers);
+}
+
+	var frame_index := project.frames.find(frame)
+	var previous_ordered_layers: Array[int] = project.ordered_layers
+	project.order_layers(frame_index)
+	var textures: Array[Image] = []
+	var metadata_image := Image.create(project.layers.size(), 4, false, Image.FORMAT_R8)
+	for i in project.layers.size():
+		var ordered_index := project.ordered_layers[i]
+		var layer := project.layers[ordered_index]
+		var include := true if layer.is_visible_in_hierarchy() else false
+		if only_selected_cels and include:
+			var test_array := [frame_index, i]
+			if not test_array in project.selected_cels:
+				include = false
+		if only_selected_layers and include:
+			var layer_is_selected := false
+			for selected_cel in project.selected_cels:
+				if i == selected_cel[1]:
+					layer_is_selected = true
+					break
+			if not layer_is_selected:
+				include = false
+		var cel := frame.cels[ordered_index]
+		if DisplayServer.get_name() == "headless":
+			blend_layers_headless(image, project, layer, cel, origin)
+		else:
+			if layer.is_blender():
+				var cel_image := (layer as GroupLayer).blend_children(frame)
+				textures.append(cel_image)
+			else:
+				var cel_image := layer.display_effects(cel)
+				textures.append(cel_image)
+			if (
+				layer.is_blended_by_ancestor()
+				and not only_selected_cels
+				and not only_selected_layers
+			):
+				include = false
+			set_layer_metadata_image(layer, cel, metadata_image, ordered_index, include)
+	if DisplayServer.get_name() != "headless":
+		var texture_array := Texture2DArray.new()
+		texture_array.create_from_images(textures)
+		var params := {
+			"layers": texture_array,
+			"metadata": ImageTexture.create_from_image(metadata_image),
+		}
+		var blended := Image.create(project.size.x, project.size.y, false, image.get_format())
+		var gen := ShaderImageEffect.new()
+		gen.generate_image(blended, blend_layers_shader, params, project.size)
+		image.blend_rect(blended, Rect2i(Vector2i.ZERO, project.size), origin)
+	# Re-order the layers again to ensure correct canvas drawing
+	project.ordered_layers = previous_ordered_layers
+
 void DrawingAlgosCpp::SetLayerMetadataImage(Ref<RefCounted> layer, Ref<RefCounted> cel, Ref<Image> image, int index, bool include)
 {
 	layer->set_script("res://src/Classes/Layers/BaseLayer.gd");
@@ -757,9 +905,6 @@ void DrawingAlgosCpp::CropToContent()
 
 	Ref<RefCounted> project = Object::cast_to<RefCounted>(global->get("current_project"));
 	project->set_script("res://src/Classes/Project.gd");
-
-	if (!project->get("has_selection"))
-		return;
 	
 	Node2D *canvas = Object::cast_to<Node2D>(global->get("canvas"));
 	project->set_script("res://src/UI/Canvas/Canvas.gd");
@@ -818,6 +963,49 @@ void DrawingAlgosCpp::CropToContent()
 		
 		cropped->call("add_data_to_dictionary", redo_data, cel_image);
  		cel_image->call("add_data_to_dictionary", undo_data);
+	}
+
+	GeneralDoAndUndoScale(width, height, redo_data, undo_data);
+}
+
+void DrawingAlgosCpp::ResizeCanvas(int width, int height, int offset_x, int offset_y)
+{
+	SceneTree *scene_tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+	Node *global = scene_tree->get_root()->get_node_or_null("Global");
+
+	Ref<RefCounted> project = Object::cast_to<RefCounted>(global->get("current_project"));
+	project->set_script("res://src/Classes/Project.gd");
+	
+	Dictionary redo_data, undo_data;
+
+	TypedArray<RefCounted> pixel_cels = project->call("get_all_pixel_cels");
+
+	for (int i = 0; i < pixel_cels.size(); i++)
+	{
+		Ref<RefCounted> cel = pixel_cels[i];
+		cel->set_script("res://src/Classes/Cels/PixelCel.gd"); // TODO: This assigns PixeCel to everything, but what if the cel is no that?
+
+		Ref<Image> cel_image = cel->call("get_image");
+		cel_image->set_script("res://src/Classes/ImageExtended.gd");
+		
+		Ref<Image> resized = memnew(Image);
+		resized->set_script("res://src/Classes/ImageExtended.gd");
+		
+		resized->call("create_custom", width, height, cel_image->has_mipmaps(), cel_image->get_format(), cel_image->get("is_indexed"));
+		resized->blend_rect(cel_image, Rect2i(Vector2i(0, 0), cel_image->get_size()), Vector2i(offset_x, offset_y));
+		resized->call("convert_rgb_to_indexed");
+
+		if (cel->get_script() == "res://src/Classes/Cels/CelTileMap.gd")
+		{
+			Ref<RefCounted> tileset = cel->get("tileset");
+			Vector2i tile_size = tileset->get("tile_size");
+
+			bool skip_tileset = (offset_x % tile_size.x == 0 && offset_y % tile_size.y == 0);
+			cel->call("serialize_undo_data_source_image", resized, redo_data, undo_data, skip_tileset);
+		}
+
+		resized->call("add_data_to_dictionary", redo_data, cel_image);
+		cel_image->call("add_data_to_dictionary", undo_data);
 	}
 
 	GeneralDoAndUndoScale(width, height, redo_data, undo_data);

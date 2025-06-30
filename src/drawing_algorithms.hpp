@@ -27,6 +27,7 @@ public:
     DrawingAlgosCpp();
     ~DrawingAlgosCpp();
 
+    static void BlendLayers(Ref<Image> image, Ref<RefCounted> frame, Vector2i origin, Ref<RefCounted> project, bool only_selected_cels = false, bool only_selected_layers = false);
     static void SetLayerMetadataImage(Ref<RefCounted> layer, Ref<RefCounted> cel, Ref<Image>, int index, bool include = true); // TODO: Broken
     static void BlendLayersHeadless(Ref<Image> image, Ref<RefCounted> project, Ref<RefCounted> layer, Ref<RefCounted> cel, Vector2i origin);
     static TypedArray<Vector2i> GetEllipsePoints(Vector2i pos, Vector2i size);
@@ -44,6 +45,7 @@ public:
     Ref<Image> ResizeImage(Ref<Image> image, int width, int height, int interpolation);
     static void CropToSelection();
     static void CropToContent();
+    static void ResizeCanvas(int width, int height, int offset_x, int offset_y);
     static void GeneralDoAndUndoScale(int width, int height, Dictionary redo_data, Dictionary undo_data);
 };
 
